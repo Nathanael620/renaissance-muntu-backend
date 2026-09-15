@@ -26,5 +26,10 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('contact', function (Request $request) {
             return Limit::perMinute(5)->by($request->ip());
         });
+
+        // Rate limit public checkout attempts to keep donation creation sane.
+        RateLimiter::for('checkout', function (Request $request) {
+            return Limit::perMinute(10)->by($request->ip());
+        });
     }
 }

@@ -14,6 +14,16 @@ return [
     |
     */
 
+    'stripe' => [
+        // Stripe API keys: https://dashboard.stripe.com/apikeys.
+        // Never commit real keys; they only come from the environment.
+        'secret_key' => env('STRIPE_SECRET_KEY'),
+        'publishable_key' => env('STRIPE_PUBLISHABLE_KEY'),
+
+        // Endpoint signing secret: https://dashboard.stripe.com/webhooks.
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],
