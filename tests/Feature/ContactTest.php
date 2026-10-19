@@ -122,6 +122,30 @@ class ContactTest extends TestCase
             return $mail->hasTo('equipe@renaissance-muntu.test')
                 && $mail->contact->name === 'Marie Kabasele';
         });
+
+    public function test_contact_notification_reply_to_is_set_to_visitor_email(): void
+    {
+        $this->postJson('/api/contact', $this->validPayload)->assertStatus(201);
+
+        Mail::assertSent(ContactNotificationMail::class, function (ContactNotificationMail $mail) {
+            return $mail->hasReplyTo('marie@example.com', 'Marie Kabasele');
+        });
+    }
+}
+}
+}
+}
+}
+
+    public function test_contact_notification_reply_to_is_set_to_visitor_email(): void
+    {
+        $this->postJson('/api/contact', $this->validPayload)->assertStatus(201);
+
+        Mail::assertSent(ContactNotificationMail::class, function (ContactNotificationMail $mail) {
+            return $mail->hasReplyTo('marie@example.com', 'Marie Kabasele');
+        });
+    }
+}
     }
 
     public function test_contact_returns_201_when_mail_fails(): void
@@ -161,5 +185,8 @@ class ContactTest extends TestCase
 
         $response->assertStatus(201);
         $this->assertDatabaseCount('contacts', 0);
+}
     }
+}
+}
 }

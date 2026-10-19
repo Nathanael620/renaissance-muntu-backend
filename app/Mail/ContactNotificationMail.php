@@ -28,6 +28,10 @@ class ContactNotificationMail extends Mailable
     {
         return new Envelope(
             subject: 'Nouveau message de contact sur Renaissance Muntu',
+            from: config('mail.from.address'),
+            replyTo: [
+                $this->contact->email => $this->contact->name,
+            ],
         );
     }
 
