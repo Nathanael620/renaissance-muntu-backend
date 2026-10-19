@@ -5,6 +5,7 @@ namespace App\Mail;
 use App\Models\Contact;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
@@ -30,7 +31,7 @@ class ContactNotificationMail extends Mailable
             subject: 'Nouveau message de contact sur Renaissance Muntu',
             from: config('mail.from.address'),
             replyTo: [
-                $this->contact->email => $this->contact->name,
+                new Address($this->contact->email, $this->contact->name),
             ],
         );
     }
