@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $partnership_type
  * @property string|null $message
  * @property string $status
+ * @property string $review_status
  */
 #[Fillable([
     'name',
@@ -23,6 +24,7 @@ use Illuminate\Database\Eloquent\Model;
     'partnership_type',
     'message',
     'status',
+    'review_status',
 ])]
 class PartnershipRequest extends Model
 {

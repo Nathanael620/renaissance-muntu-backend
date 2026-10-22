@@ -49,7 +49,7 @@ class StripeDonationService
                 'donation_id' => $donation->id,
                 'internal_reference' => $donation->internal_reference,
             ],
-            'success_url' => $frontendUrl.'/don/success?reference='.$reference,
+            'success_url' => $frontendUrl.'/don/success?reference='.$reference.'&session_id={CHECKOUT_SESSION_ID}',
             'cancel_url' => $frontendUrl.'/don/cancel?reference='.$reference,
         ];
     }

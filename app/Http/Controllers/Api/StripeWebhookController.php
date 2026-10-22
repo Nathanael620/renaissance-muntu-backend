@@ -41,7 +41,11 @@ class StripeWebhookController extends Controller
         }
 
         try {
-            if ($event->type !== 'checkout.session.completed') {
+            if (! in_array($event->type, [
+                'checkout.session.completed',
+                'checkout.session.async_payment_succeeded',
+                'checkout.session.async_payment_failed',
+            ], true)) {
                 return response()->json(['received' => true, 'processed' => false]);
             }
 
@@ -53,6 +57,13 @@ class StripeWebhookController extends Controller
                 ]);
 
                 return response()->json(['received' => false], 400);
+            }
+
+            if ($event->type === 'checkout.session.async_payment_failed') {
+                return response()->json([
+                    'received' => true,
+                    'processed' => $this->failDonation($event, $session),
+                ]);
             }
 
             $result = $this->completeDonation($event, $session);
@@ -150,6 +161,37 @@ class StripeWebhookController extends Controller
             ]);
 
             return ['status' => 'completed', 'donation_id' => $donation->id];
+        });
+    }
+
+    private function failDonation(object $event, object $session): bool
+    {
+        $metadata = $session->metadata ?? null;
+        $donationId = $this->stripeValue($metadata, 'donation_id');
+        $internalReference = $this->stripeValue($metadata, 'internal_reference');
+        $clientReference = $session->client_reference_id ?? null;
+
+        if (blank($donationId) && blank($internalReference) && blank($clientReference)) {
+            return false;
+        }
+
+        return DB::transaction(function () use ($event, $session, $donationId, $internalReference, $clientReference): bool {
+            $donation = $this->findDonation($donationId, $internalReference, $clientReference);
+
+            if (! $donation
+                || $donation->status !== 'pending'
+                || ! $this->referencesMatch($donation, $internalReference, $clientReference)
+                || $donation->stripe_session_id !== ($session->id ?? null)
+                || ($session->payment_status ?? null) === 'paid') {
+                return false;
+            }
+
+            $donation->update([
+                'stripe_event_id' => $event->id,
+                'status' => 'failed',
+            ]);
+
+            return true;
         });
     }
 

@@ -27,9 +27,26 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($request->ip());
         });
 
+        RateLimiter::for('partnerships', function (Request $request) {
+            return Limit::perMinute(5)->by($request->ip());
+        });
+
         // Rate limit public checkout attempts to keep donation creation sane.
         RateLimiter::for('checkout', function (Request $request) {
             return Limit::perMinute(10)->by($request->ip());
+        });
+
+        RateLimiter::for('donation-status', function (Request $request) {
+            return Limit::perMinute(30)->by($request->ip());
+        });
+
+        RateLimiter::for('admin-login', function (Request $request) {
+            $email = mb_strtolower((string) $request->input('email'));
+
+            return [
+                Limit::perMinute(5)->by('admin-login-email:'.$email),
+                Limit::perMinute(30)->by('admin-login-ip:'.$request->ip()),
+            ];
         });
     }
 }

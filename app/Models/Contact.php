@@ -13,8 +13,9 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $subject
  * @property string $message
  * @property string $status
+ * @property string $workflow_status
  */
-#[Fillable(['name', 'email', 'phone', 'subject', 'message', 'status'])]
+#[Fillable(['name', 'email', 'phone', 'subject', 'message', 'status', 'workflow_status'])]
 class Contact extends Model
 {
     /**

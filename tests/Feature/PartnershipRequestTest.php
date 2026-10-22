@@ -6,6 +6,7 @@ use App\Mail\PartnershipRequestNotificationMail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Mail\Mailer;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Tests\TestCase;
 
@@ -90,6 +91,16 @@ class PartnershipRequestTest extends TestCase
             ->assertJsonValidationErrors(['partnership_type']);
     }
 
+    public function test_partnership_type_is_required(): void
+    {
+        $payload = $this->validPayload;
+        unset($payload['partnership_type']);
+
+        $this->postJson('/api/partnerships', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['partnership_type']);
+    }
+
     public function test_optional_fields_are_allowed(): void
     {
         Mail::fake();
@@ -149,5 +160,17 @@ class PartnershipRequestTest extends TestCase
             'email' => 'marie@example.com',
             'status' => 'email_failed',
         ]);
+    }
+
+    public function test_rate_limiting_returns_429_after_excessive_requests(): void
+    {
+        Mail::fake();
+        RateLimiter::clear('partnerships');
+
+        foreach (range(1, 5) as $attempt) {
+            $this->postJson('/api/partnerships', $this->validPayload)->assertStatus(201);
+        }
+
+        $this->postJson('/api/partnerships', $this->validPayload)->assertStatus(429);
     }
 }

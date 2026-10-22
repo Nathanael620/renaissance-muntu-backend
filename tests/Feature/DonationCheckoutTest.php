@@ -161,14 +161,14 @@ class DonationCheckoutTest extends TestCase
         $this->assertSame($donation->internal_reference, $this->stripeClient->lastParams['metadata']['internal_reference']);
     }
 
-    public function test_stripe_session_uses_frontend_urls_with_reference(): void
+    public function test_stripe_session_uses_compatible_return_routes_and_checkout_session_id(): void
     {
         $this->postJson('/api/donations/checkout-session', $this->validPayload())->assertStatus(201);
 
         $donation = Donation::firstOrFail();
 
         $this->assertSame(
-            'http://localhost:5173/don/success?reference='.$donation->internal_reference,
+            'http://localhost:5173/don/success?reference='.$donation->internal_reference.'&session_id={CHECKOUT_SESSION_ID}',
             $this->stripeClient->lastParams['success_url']
         );
         $this->assertSame(

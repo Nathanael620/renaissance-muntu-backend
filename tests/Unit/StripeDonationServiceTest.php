@@ -67,7 +67,7 @@ class StripeDonationServiceTest extends TestCase
         $payload = (new StripeDonationService())->checkoutPayload($this->donation());
 
         $this->assertSame(
-            'http://localhost:5173/don/success?reference=DON-00000001',
+            'http://localhost:5173/don/success?reference=DON-00000001&session_id={CHECKOUT_SESSION_ID}',
             $payload['success_url']
         );
         $this->assertSame(

@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\Donation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Stripe\WebhookSignature;
 use Tests\TestCase;
 
@@ -39,6 +41,37 @@ class StripeWebhookTest extends TestCase
         $this->assertSame('pi_test_123', $donation->stripe_payment_intent_id);
         $this->assertSame('cus_test_123', $donation->stripe_customer_id);
         $this->assertSame('evt_test_completed_123', $donation->stripe_event_id);
+    }
+
+    public function test_async_payment_success_completes_the_pending_donation(): void
+    {
+        Storage::fake('local');
+        Queue::fake();
+        $donation = $this->donation();
+        $payload = $this->payload($donation, ['event_id' => 'evt_test_async_success']);
+        $payload['type'] = 'checkout.session.async_payment_succeeded';
+
+        $this->postWebhook($payload)->assertOk()->assertJson(['received' => true]);
+
+        $this->assertSame('completed', $donation->refresh()->status);
+        $this->assertSame('evt_test_async_success', $donation->stripe_event_id);
+    }
+
+    public function test_async_payment_failure_marks_only_the_pending_donation_failed(): void
+    {
+        $donation = $this->donation();
+        $payload = $this->payload($donation, [
+            'event_id' => 'evt_test_async_failed',
+            'payment_status' => 'unpaid',
+        ]);
+        $payload['type'] = 'checkout.session.async_payment_failed';
+
+        $this->postWebhook($payload)
+            ->assertOk()
+            ->assertJson(['received' => true, 'processed' => true]);
+
+        $this->assertSame('failed', $donation->refresh()->status);
+        $this->assertSame('evt_test_async_failed', $donation->stripe_event_id);
     }
 
     public function test_metadata_donation_id_and_internal_reference_are_both_verified(): void
