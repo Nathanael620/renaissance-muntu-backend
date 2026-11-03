@@ -24,22 +24,22 @@ class StripeDonationServiceTest extends TestCase
             'donation.frontend_url' => 'http://localhost:5173',
         ]);
 
-        $payload = (new StripeDonationService())->checkoutPayload($this->donation());
+        $payload = (new StripeDonationService)->checkoutPayload($this->donation());
 
         $this->assertSame('cad', $payload['line_items'][0]['price_data']['currency']);
         $this->assertSame(2500, $payload['line_items'][0]['price_data']['unit_amount']);
     }
 
-    public function test_payload_never_accepts_client_currency(): void
+    public function test_payload_uses_the_persisted_currency_as_authoritative(): void
     {
         config([
             'donation.currency' => 'eur',
             'donation.frontend_url' => 'http://localhost:5173',
         ]);
 
-        $payload = (new StripeDonationService())->checkoutPayload($this->donation(['currency' => 'usd']));
+        $payload = (new StripeDonationService)->checkoutPayload($this->donation(['currency' => 'usd']));
 
-        $this->assertSame('eur', $payload['line_items'][0]['price_data']['currency']);
+        $this->assertSame('usd', $payload['line_items'][0]['price_data']['currency']);
     }
 
     public function test_payload_contains_metadata_and_client_reference_for_the_webhook(): void
@@ -49,7 +49,7 @@ class StripeDonationServiceTest extends TestCase
             'donation.frontend_url' => 'http://localhost:5173',
         ]);
 
-        $payload = (new StripeDonationService())->checkoutPayload($this->donation());
+        $payload = (new StripeDonationService)->checkoutPayload($this->donation());
 
         $this->assertSame('payment', $payload['mode']);
         $this->assertSame('DON-00000001', $payload['client_reference_id']);
@@ -64,7 +64,7 @@ class StripeDonationServiceTest extends TestCase
             'donation.frontend_url' => 'http://localhost:5173',
         ]);
 
-        $payload = (new StripeDonationService())->checkoutPayload($this->donation());
+        $payload = (new StripeDonationService)->checkoutPayload($this->donation());
 
         $this->assertSame(
             'http://localhost:5173/don/success?reference=DON-00000001&session_id={CHECKOUT_SESSION_ID}',

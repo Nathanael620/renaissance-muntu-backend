@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Jobs\SendDonationReceiptEmail;
 use App\Http\Controllers\Controller;
 use App\Models\Donation;
-use App\Models\Receipt;
-use App\Services\DonationReceiptService;
+use App\Services\DonationReceiptEmailDispatcher;
+use App\Support\DonationCurrencyAmount;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +17,7 @@ use Throwable;
 
 class StripeWebhookController extends Controller
 {
-    public function handle(Request $request): JsonResponse
+    public function handle(Request $request, DonationReceiptEmailDispatcher $receiptEmailDispatcher): JsonResponse
     {
         $payload = $request->getContent();
         $signature = $request->header('Stripe-Signature');
@@ -34,7 +33,7 @@ class StripeWebhookController extends Controller
             $event = Webhook::constructEvent($payload, $signature, $secret);
         } catch (SignatureVerificationException|UnexpectedValueException $exception) {
             Log::warning('Webhook Stripe rejeté : signature ou payload invalide.', [
-                'error' => $exception->getMessage(),
+                'exception' => $exception::class,
             ]);
 
             return response()->json(['received' => false], 400);
@@ -69,7 +68,9 @@ class StripeWebhookController extends Controller
             $result = $this->completeDonation($event, $session);
 
             if (in_array($result['status'], ['completed', 'already_processed'], true)) {
-                $this->prepareReceiptEmail($result['donation_id']);
+                $receiptEmailDispatcher->dispatchForDonation(
+                    Donation::query()->findOrFail($result['donation_id'])
+                );
 
                 return response()->json([
                     'received' => true,
@@ -81,7 +82,7 @@ class StripeWebhookController extends Controller
         } catch (Throwable $exception) {
             Log::error('Erreur interne lors du traitement du webhook Stripe.', [
                 'event_id' => $event->id ?? null,
-                'error' => $exception->getMessage(),
+                'exception' => $exception::class,
             ]);
 
             return response()->json(['received' => false], 500);
@@ -93,62 +94,51 @@ class StripeWebhookController extends Controller
      */
     private function completeDonation(object $event, object $session): array
     {
-        $metadata = $session->metadata ?? null;
-        $donationId = $this->stripeValue($metadata, 'donation_id');
-        $internalReference = $this->stripeValue($metadata, 'internal_reference');
-        $clientReference = $session->client_reference_id ?? null;
+        $donationId = $this->stripeValue($session->metadata ?? null, 'donation_id');
+        $internalReference = $this->stripeValue($session->metadata ?? null, 'internal_reference');
+        $clientReference = is_string($session->client_reference_id ?? null)
+            ? $session->client_reference_id
+            : null;
 
-        if (blank($donationId) && blank($internalReference) && blank($clientReference)) {
-            Log::warning('Webhook Stripe sans identifiant de donation.', [
-                'event_id' => $event->id,
-            ]);
-
+        if (! filled($donationId) || ! ctype_digit($donationId)) {
             return ['status' => 'missing_reference'];
         }
 
-        return DB::transaction(function () use ($event, $session, $donationId, $internalReference, $clientReference): array {
-            $donation = $this->findDonation($donationId, $internalReference, $clientReference);
+        return DB::transaction(function () use (
+            $event,
+            $session,
+            $donationId,
+            $internalReference,
+            $clientReference
+        ): array {
+            $donation = Donation::query()
+                ->whereKey((int) $donationId)
+                ->lockForUpdate()
+                ->first();
 
-            if (! $donation) {
-                Log::warning('Donation introuvable pour le webhook Stripe.', [
-                    'event_id' => $event->id,
-                    'donation_id' => $donationId,
-                    'internal_reference' => $internalReference,
-                ]);
-
-                return ['status' => 'not_found'];
-            }
-
-            if ($donation->status === 'completed' || $donation->stripe_event_id === $event->id) {
-                return ['status' => 'already_processed', 'donation_id' => $donation->id];
-            }
-
-            if (! $this->referencesMatch($donation, $internalReference, $clientReference)
-                || $donation->stripe_session_id !== ($session->id ?? null)) {
-                Log::warning('Incohérence des références du webhook Stripe.', [
-                    'event_id' => $event->id,
-                    'donation_id' => $donation->id,
-                ]);
-
+            if (! $donation
+                || ! $this->referencesMatch($donation, $internalReference, $clientReference)
+                || ! filled($session->id ?? null)
+                || $donation->stripe_session_id !== $session->id) {
                 return ['status' => 'invalid_references'];
             }
 
-            if (($session->payment_status ?? null) !== 'paid') {
-                Log::warning('Paiement Stripe non confirmé.', [
-                    'event_id' => $event->id,
-                    'donation_id' => $donation->id,
-                ]);
-
+            if (($session->mode ?? null) !== 'payment'
+                || ($session->status ?? null) !== 'complete'
+                || ($session->payment_status ?? null) !== 'paid') {
                 return ['status' => 'unpaid'];
             }
 
             if (! $this->amountAndCurrencyMatch($donation, $session)) {
-                Log::warning('Montant ou devise Stripe incohérent.', [
-                    'event_id' => $event->id,
-                    'donation_id' => $donation->id,
-                ]);
-
                 return ['status' => 'invalid_amount'];
+            }
+
+            if ($donation->status === 'completed') {
+                return ['status' => 'already_processed', 'donation_id' => $donation->id];
+            }
+
+            if (! in_array($donation->status, ['pending', 'failed'], true)) {
+                return ['status' => 'invalid_state'];
             }
 
             $donation->update([
@@ -166,23 +156,37 @@ class StripeWebhookController extends Controller
 
     private function failDonation(object $event, object $session): bool
     {
-        $metadata = $session->metadata ?? null;
-        $donationId = $this->stripeValue($metadata, 'donation_id');
-        $internalReference = $this->stripeValue($metadata, 'internal_reference');
-        $clientReference = $session->client_reference_id ?? null;
+        $donationId = $this->stripeValue($session->metadata ?? null, 'donation_id');
+        $internalReference = $this->stripeValue($session->metadata ?? null, 'internal_reference');
+        $clientReference = is_string($session->client_reference_id ?? null)
+            ? $session->client_reference_id
+            : null;
 
-        if (blank($donationId) && blank($internalReference) && blank($clientReference)) {
+        if (! filled($donationId) || ! ctype_digit($donationId)) {
             return false;
         }
 
-        return DB::transaction(function () use ($event, $session, $donationId, $internalReference, $clientReference): bool {
-            $donation = $this->findDonation($donationId, $internalReference, $clientReference);
+        return DB::transaction(function () use (
+            $event,
+            $session,
+            $donationId,
+            $internalReference,
+            $clientReference
+        ): bool {
+            $donation = Donation::query()
+                ->whereKey((int) $donationId)
+                ->lockForUpdate()
+                ->first();
 
             if (! $donation
                 || $donation->status !== 'pending'
                 || ! $this->referencesMatch($donation, $internalReference, $clientReference)
-                || $donation->stripe_session_id !== ($session->id ?? null)
-                || ($session->payment_status ?? null) === 'paid') {
+                || ! filled($session->id ?? null)
+                || $donation->stripe_session_id !== $session->id
+                || ($session->mode ?? null) !== 'payment'
+                || ($session->status ?? null) !== 'complete'
+                || ($session->payment_status ?? null) !== 'unpaid'
+                || ! $this->amountAndCurrencyMatch($donation, $session)) {
                 return false;
             }
 
@@ -195,78 +199,35 @@ class StripeWebhookController extends Controller
         });
     }
 
-    private function prepareReceiptEmail(int $donationId): void
-    {
-        $donation = Donation::find($donationId);
-
-        if (! $donation || $donation->status !== 'completed') {
-            return;
-        }
-
-        try {
-            $receipt = app(DonationReceiptService::class)->generate($donation);
-        } catch (Throwable $exception) {
-            Log::error('Le reçu ne peut pas être préparé après confirmation du paiement.', [
-                'donation_id' => $donationId,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return;
-        }
-
-        $shouldDispatch = DB::transaction(function () use ($receipt): bool {
-            $lockedReceipt = Receipt::query()->lockForUpdate()->find($receipt->id);
-
-            if (! $lockedReceipt || $lockedReceipt->email_sent_at !== null || $lockedReceipt->email_queued_at !== null) {
-                return false;
-            }
-
-            $lockedReceipt->update(['email_queued_at' => now()]);
-
-            return true;
-        });
-
-        if ($shouldDispatch) {
-            SendDonationReceiptEmail::dispatch($receipt->id)->afterCommit();
-        }
-    }
-
-    private function findDonation(?string $donationId, ?string $internalReference, ?string $clientReference): ?Donation
-    {
-        if (filled($donationId) && ctype_digit($donationId)) {
-            return Donation::query()->whereKey((int) $donationId)->lockForUpdate()->first();
-        }
-
-        $reference = $internalReference ?: $clientReference;
-
-        if (blank($reference)) {
-            return null;
-        }
-
-        return Donation::query()->where('internal_reference', $reference)->lockForUpdate()->first();
-    }
-
-    private function referencesMatch(Donation $donation, ?string $internalReference, ?string $clientReference): bool
-    {
-        return (blank($internalReference) || $donation->internal_reference === $internalReference)
-            && (blank($clientReference) || $donation->internal_reference === $clientReference);
+    private function referencesMatch(
+        Donation $donation,
+        ?string $internalReference,
+        ?string $clientReference
+    ): bool {
+        return filled($internalReference)
+            && filled($clientReference)
+            && $donation->internal_reference === $internalReference
+            && $donation->internal_reference === $clientReference;
     }
 
     private function amountAndCurrencyMatch(Donation $donation, object $session): bool
     {
-        return $this->amountToMinorUnits($donation->amount) === (int) ($session->amount_total ?? -1)
-            && strtolower($donation->currency) === strtolower((string) ($session->currency ?? ''));
+        $amountTotal = $session->amount_total ?? null;
+        $currency = $session->currency ?? null;
+
+        if (! is_int($amountTotal) || ! is_string($currency)) {
+            return false;
+        }
+
+        try {
+            return DonationCurrencyAmount::toMinorUnits($donation->amount, $donation->currency) === $amountTotal
+                && strtolower($donation->currency) === strtolower($currency);
+        } catch (\InvalidArgumentException) {
+            return false;
+        }
     }
 
-    private function amountToMinorUnits(string|float $amount): int
-    {
-        $normalized = number_format((float) $amount, 2, '.', '');
-        [$whole, $fraction] = explode('.', $normalized);
-
-        return ((int) $whole * 100) + (int) $fraction;
-    }
-
-    private function stripeValue(object|null $object, string $key): ?string
+    private function stripeValue(?object $object, string $key): ?string
     {
         if (! $object || ! isset($object->{$key})) {
             return null;

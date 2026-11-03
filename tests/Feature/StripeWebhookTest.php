@@ -2,23 +2,25 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\SendDonationReceiptEmail;
 use App\Models\Donation;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Testing\TestResponse;
 use Stripe\WebhookSignature;
+use Tests\Support\DonationTestSchema;
 use Tests\TestCase;
 
 class StripeWebhookTest extends TestCase
 {
-    use RefreshDatabase;
-
     private const WEBHOOK_SECRET = 'whsec_test_secret';
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        DonationTestSchema::create();
         config([
             'services.stripe.webhook_secret' => self::WEBHOOK_SECRET,
             'donation.currency' => 'cad',
@@ -27,6 +29,7 @@ class StripeWebhookTest extends TestCase
 
     public function test_paid_checkout_completes_the_pending_donation(): void
     {
+        Queue::fake([SendDonationReceiptEmail::class]);
         $donation = $this->donation();
 
         $response = $this->postWebhook($this->payload($donation));
@@ -88,8 +91,9 @@ class StripeWebhookTest extends TestCase
         $this->assertSame('pending', $donation->refresh()->status);
     }
 
-    public function test_client_reference_id_can_identify_the_donation(): void
+    public function test_client_reference_id_without_metadata_does_not_confirm_the_donation(): void
     {
+        Queue::fake([SendDonationReceiptEmail::class]);
         $donation = $this->donation();
 
         $payload = $this->payload($donation);
@@ -98,7 +102,7 @@ class StripeWebhookTest extends TestCase
 
         $this->postWebhook($payload)->assertOk();
 
-        $this->assertSame('completed', $donation->refresh()->status);
+        $this->assertSame('pending', $donation->refresh()->status);
     }
 
     public function test_amount_mismatch_does_not_complete_the_donation(): void
@@ -106,6 +110,28 @@ class StripeWebhookTest extends TestCase
         $donation = $this->donation();
 
         $this->postWebhook($this->payload($donation, ['amount_total' => 2501]))->assertOk();
+
+        $this->assertSame('pending', $donation->refresh()->status);
+    }
+
+    public function test_different_checkout_session_id_does_not_complete_the_donation(): void
+    {
+        $donation = $this->donation();
+
+        $this->postWebhook($this->payload($donation, ['id' => 'cs_test_other_session']))->assertOk();
+
+        $this->assertSame('pending', $donation->refresh()->status);
+    }
+
+    public function test_checkout_in_the_wrong_mode_or_state_does_not_complete_the_donation(): void
+    {
+        $donation = $this->donation();
+
+        $this->postWebhook($this->payload($donation, ['mode' => 'subscription']))->assertOk();
+        $this->postWebhook($this->payload($donation, [
+            'event_id' => 'evt_test_incomplete_checkout',
+            'status' => 'open',
+        ]))->assertOk();
 
         $this->assertSame('pending', $donation->refresh()->status);
     }
@@ -207,6 +233,7 @@ class StripeWebhookTest extends TestCase
 
     public function test_same_event_is_idempotent(): void
     {
+        Queue::fake([SendDonationReceiptEmail::class]);
         $donation = $this->donation();
         $payload = $this->payload($donation);
 
@@ -220,6 +247,7 @@ class StripeWebhookTest extends TestCase
 
     public function test_already_completed_donation_cannot_regress(): void
     {
+        Queue::fake([SendDonationReceiptEmail::class]);
         $donation = $this->donation(['status' => 'completed', 'completed_at' => now()]);
         $completedAt = $donation->completed_at;
 
@@ -243,7 +271,7 @@ class StripeWebhookTest extends TestCase
     public function test_webhook_route_is_public(): void
     {
         $this->assertSame('POST', app('router')->getRoutes()->match(
-            \Illuminate\Http\Request::create('/api/stripe/webhook', 'POST')
+            Request::create('/api/stripe/webhook', 'POST')
         )->methods()[0]);
     }
 
@@ -264,6 +292,8 @@ class StripeWebhookTest extends TestCase
         $object = array_merge([
             'id' => 'cs_test_webhook_123',
             'object' => 'checkout.session',
+            'mode' => 'payment',
+            'status' => 'complete',
             'payment_status' => 'paid',
             'amount_total' => 2500,
             'currency' => 'cad',
@@ -284,7 +314,7 @@ class StripeWebhookTest extends TestCase
         ];
     }
 
-    private function postWebhook(array $payload): \Illuminate\Testing\TestResponse
+    private function postWebhook(array $payload): TestResponse
     {
         $body = json_encode($payload, JSON_THROW_ON_ERROR);
 

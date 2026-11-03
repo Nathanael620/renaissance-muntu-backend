@@ -3,12 +3,17 @@
 namespace Tests\Feature;
 
 use App\Models\Donation;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Support\DonationTestSchema;
 use Tests\TestCase;
 
 class DonationStatusTest extends TestCase
 {
-    use RefreshDatabase;
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        DonationTestSchema::create();
+    }
 
     public function test_pending_checkout_is_not_reported_as_paid(): void
     {

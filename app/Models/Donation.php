@@ -13,6 +13,8 @@ use Illuminate\Support\Carbon;
 /**
  * @property int $id
  * @property string $internal_reference
+ * @property string|null $checkout_idempotency_key
+ * @property string|null $checkout_request_hash
  * @property string $amount
  * @property string $currency
  * @property string $donor_name
@@ -37,6 +39,8 @@ use Illuminate\Support\Carbon;
  */
 #[Fillable([
     'internal_reference',
+    'checkout_idempotency_key',
+    'checkout_request_hash',
     'amount',
     'currency',
     'donor_name',
@@ -104,5 +108,10 @@ class Donation extends Model
     public function receipt(): HasOne
     {
         return $this->hasOne(Receipt::class);
+    }
+
+    public function receiptEmailOutbox(): HasOne
+    {
+        return $this->hasOne(ReceiptEmailOutbox::class);
     }
 }

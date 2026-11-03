@@ -15,12 +15,21 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         __DIR__.'/../app/Console/Commands',
     ])
-    ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->statefulApi();
-        $middleware->alias([
-            'admin.permission' => \App\Http\Middleware\EnsureAdminPermission::class,
-        ]);
-    })
+    
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->statefulApi();
+
+    $middleware->redirectGuestsTo(
+        fn (Request $request): ?string => $request->is('api/*')
+            ? null
+            : route('login'),
+    );
+
+    $middleware->alias([
+        'admin.permission' => \App\Http\Middleware\EnsureAdminPermission::class,
+    ]);
+})
+
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),

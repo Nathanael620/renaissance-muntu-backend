@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Donation;
+use App\Support\DonationCurrencyAmount;
+use InvalidArgumentException;
 use Stripe\Checkout\Session;
 use Stripe\Stripe;
 
@@ -15,14 +17,26 @@ class StripeDonationService
     {
         Stripe::setApiKey(config('services.stripe.secret_key'));
 
-        return Session::create($this->checkoutPayload($donation));
+        return Session::create($this->checkoutPayload($donation), [
+            'idempotency_key' => $this->checkoutIdempotencyKey($donation),
+        ]);
+    }
+
+    public function retrieveCheckoutSession(Donation $donation): Session
+    {
+        Stripe::setApiKey(config('services.stripe.secret_key'));
+
+        if (blank($donation->stripe_session_id)) {
+            throw new InvalidArgumentException('Donation has no Stripe Checkout session.');
+        }
+
+        return Session::retrieve($donation->stripe_session_id);
     }
 
     /**
      * Build the Stripe Checkout Session creation payload.
      *
-     * The currency always comes from the server configuration; the amount is
-     * converted to the smallest currency unit (cents) on the server side.
+     * The persisted currency is authoritative; Stripe expects amounts in minor units.
      *
      * @return array<string, mixed>
      */
@@ -38,8 +52,8 @@ class StripeDonationService
             'line_items' => [[
                 'quantity' => 1,
                 'price_data' => [
-                    'currency' => (string) config('donation.currency'),
-                    'unit_amount' => $this->toCents($donation->amount),
+                    'currency' => strtolower($donation->currency),
+                    'unit_amount' => DonationCurrencyAmount::toMinorUnits($donation->amount, $donation->currency),
                     'product_data' => [
                         'name' => 'Don à '.config('donation.organization.legal_name'),
                     ],
@@ -54,11 +68,10 @@ class StripeDonationService
         ];
     }
 
-    /**
-     * Convert a monetary amount into the currency smallest unit (cents).
-     */
-    private function toCents(string|float $amount): int
+    private function checkoutIdempotencyKey(Donation $donation): string
     {
-        return (int) round(((float) $amount) * 100);
+        $key = $donation->checkout_idempotency_key ?? $donation->internal_reference;
+
+        return 'donation-checkout-'.hash('sha256', (string) $key);
     }
 }
