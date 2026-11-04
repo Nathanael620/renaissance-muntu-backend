@@ -56,7 +56,10 @@ return [
 
     // Base URL of the React frontend that hosts the /don/success and /don/cancel
     // pages. Used to build Stripe Checkout redirect URLs (never hard-coded).
-    'frontend_url' => env('FRONTEND_URL'),
+    // FRONTEND_URL may list several CORS origins; the first one is used unless
+    // DONATION_FRONTEND_URL is set.
+    'frontend_url' => env('DONATION_FRONTEND_URL')
+        ?: trim(explode(',', (string) env('FRONTEND_URL'))[0]),
 
     /*
     |--------------------------------------------------------------------------
