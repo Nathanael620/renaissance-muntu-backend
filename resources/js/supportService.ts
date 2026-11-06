@@ -31,8 +31,32 @@ export type PartnershipResponse = {
     id: number;
 };
 
-export function createDonationCheckout(payload: DonationCheckoutPayload): Promise<DonationCheckoutResponse> {
-    return apiClient.post<DonationCheckoutResponse>('/donations/checkout-session', payload);
+export function generateDonationCheckoutIdempotencyKey(): string {
+    if (
+        typeof crypto !== 'undefined' &&
+        typeof crypto.getRandomValues === 'function'
+    ) {
+        const buffer = new Uint8Array(16);
+        crypto.getRandomValues(buffer);
+
+        return `checkout-${Array.from(
+            buffer,
+            (byte) => byte.toString(16).padStart(2, '0')
+        ).join('')}`;
+    }
+
+    return `checkout-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`;
+}
+
+export function createDonationCheckout(
+    payload: DonationCheckoutPayload,
+    idempotencyKey?: string
+): Promise<DonationCheckoutResponse> {
+    return apiClient.post<DonationCheckoutResponse>(
+        '/donations/checkout-session',
+        payload,
+        idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined
+    );
 }
 
 export function submitPartnershipRequest(payload: PartnershipPayload): Promise<PartnershipResponse> {

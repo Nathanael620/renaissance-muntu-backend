@@ -42,7 +42,8 @@ class StripeDonationService
      */
     public function checkoutPayload(Donation $donation): array
     {
-        $frontendUrl = rtrim((string) config('donation.frontend_url'), '/');
+        $frontendUrls = array_map('trim', explode(',', (string) config('donation.frontend_url')));
+        $frontendUrl = rtrim($frontendUrls[0] ?? '', '/');
         $reference = rawurlencode($donation->internal_reference);
 
         return [

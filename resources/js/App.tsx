@@ -1,8 +1,9 @@
-import { FormEvent, ReactElement, useState } from 'react';
+import { FormEvent, ReactElement, useRef, useState } from 'react';
 import { ApiError } from './apiClient';
 import {
     createDonationCheckout,
     DonationCheckoutPayload,
+    generateDonationCheckoutIdempotencyKey,
     submitPartnershipRequest,
 } from './supportService';
 
@@ -72,6 +73,16 @@ function App(): ReactElement {
     const [busy, setBusy] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
 
+    const checkoutKeyRef = useRef<string | null>(null);
+
+    const getCheckoutKey = (): string => {
+        if (!checkoutKeyRef.current) {
+            checkoutKeyRef.current = generateDonationCheckoutIdempotencyKey();
+        }
+
+        return checkoutKeyRef.current;
+    };
+
     window.onpopstate = () => setView(currentView());
 
     const updateDonation = (field: keyof DonationForm, value: string): void => {
@@ -88,15 +99,18 @@ function App(): ReactElement {
         setNotice(null);
 
         try {
-            const response = await createDonationCheckout({
-                ...donation,
-                donor_address: donation.donor_address || null,
-                donor_city: donation.donor_city || null,
-                donor_province: donation.donor_province || null,
-                donor_postal_code: donation.donor_postal_code || null,
-                donor_country: donation.donor_country || null,
-                amount: Number(donation.amount),
-            });
+            const response = await createDonationCheckout(
+                {
+                    ...donation,
+                    donor_address: donation.donor_address || null,
+                    donor_city: donation.donor_city || null,
+                    donor_province: donation.donor_province || null,
+                    donor_postal_code: donation.donor_postal_code || null,
+                    donor_country: donation.donor_country || null,
+                    amount: Number(donation.amount),
+                },
+                getCheckoutKey()
+            );
 
             window.location.assign(response.checkout_url);
         } catch (error) {
